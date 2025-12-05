@@ -63,7 +63,7 @@ end
 ```ruby
 chat = RubyLLM.chat(
   provider: :red_candle,
-  model: 'Qwen/Qwen2.5-1.5B-Instruct-GGUF'
+  model: 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF'
 )
 
 schema = {
@@ -75,9 +75,12 @@ schema = {
   required: ['name', 'age']
 }
 
-response = chat.ask("Generate a person profile", schema: schema)
-data = JSON.parse(response.content)
+response = chat.with_schema(schema).ask("Generate a person profile for someone named Alice who is 30 years old")
+data = response.content  # Returns a Hash when structured generation succeeds
+puts "Name: #{data['name']}, Age: #{data['age']}"
 ```
+
+**Note:** Structured output works best with smaller, well-defined schemas. TinyLlama is recommended for testing structured generation.
 
 ## Supported Models
 
