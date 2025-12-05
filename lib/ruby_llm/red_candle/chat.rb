@@ -59,27 +59,27 @@ module RubyLLM
         model = ensure_model_loaded!(payload[:model])
         messages = format_messages(payload[:messages])
 
-        # Apply chat template if available
-        prompt = if model.respond_to?(:apply_chat_template)
-                   model.apply_chat_template(messages)
-                 else
-                   # Fallback to simple formatting
-                   "#{messages.map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n\n")}\n\nassistant:"
-                 end
-
-        # Check context length
-        validate_context_length!(prompt, payload[:model])
-
-        # Configure generation
-        config_opts = {
-          temperature: payload[:temperature] || 0.7,
-          max_length: payload[:max_tokens] || 512
-        }
-
-        # Handle structured generation if schema provided
+        # Handle structured generation differently - we need to build the prompt
+        # with JSON instructions BEFORE applying the chat template
         response = if payload[:schema]
-                     generate_with_schema(model, prompt, payload[:schema], config_opts)
+                     generate_with_schema(model, messages, payload[:schema], payload)
                    else
+                     # Apply chat template if available
+                     prompt = if model.respond_to?(:apply_chat_template)
+                                model.apply_chat_template(messages)
+                              else
+                                # Fallback to simple formatting
+                                "#{messages.map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n\n")}\n\nassistant:"
+                              end
+
+                     # Check context length
+                     validate_context_length!(prompt, payload[:model])
+
+                     # Configure generation for regular (non-structured) output
+                     config_opts = {
+                       temperature: payload[:temperature] || 0.7,
+                       max_length: payload[:max_tokens] || 512
+                     }
                      model.generate(
                        prompt,
                        config: ::Candle::GenerationConfig.balanced(**config_opts)
@@ -247,18 +247,111 @@ module RubyLLM
         text_parts.join(" ")
       end
 
-      def generate_with_schema(model, prompt, schema, config_opts)
-        model.generate_structured(
+      def generate_with_schema(model, messages, schema, payload)
+        # Use Red Candle's native structured generation which uses the Rust outlines crate
+        # for grammar-constrained generation. This ensures valid JSON output.
+        #
+        # Red Candle's generate_structured:
+        # 1. Creates a StructuredConstraint from the JSON schema
+        # 2. Passes it to the generation config
+        # 3. Constrains token generation to only valid JSON tokens
+        # 4. Automatically parses and returns the result as a Hash
+
+        # Normalize schema to ensure consistent symbol keys
+        normalized_schema = deep_symbolize_keys(schema)
+
+        # Debug logging to help diagnose issues
+        RubyLLM.logger.debug "=== STRUCTURED GENERATION DEBUG ==="
+        RubyLLM.logger.debug "Original schema: #{schema.inspect}"
+        RubyLLM.logger.debug "Normalized schema: #{normalized_schema.inspect}"
+        RubyLLM.logger.debug "Messages: #{messages.inspect}"
+
+        # For structured generation, we modify the last user message to include
+        # JSON output instructions, then apply the chat template
+        structured_messages = build_structured_messages(messages, normalized_schema)
+        RubyLLM.logger.debug "Structured messages: #{structured_messages.inspect}"
+
+        # Apply chat template to get proper prompt format
+        prompt = if model.respond_to?(:apply_chat_template)
+                   model.apply_chat_template(structured_messages)
+                 else
+                   "#{structured_messages.map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n\n")}\n\nassistant:"
+                 end
+
+        RubyLLM.logger.debug "Final prompt:\n#{prompt}"
+        RubyLLM.logger.debug "=== END DEBUG ==="
+
+        # Check context length
+        validate_context_length!(prompt, payload[:model])
+
+        # Use higher max_length for structured output to ensure complete JSON
+        structured_max_length = payload[:max_tokens] || 1024
+
+        result = model.generate_structured(
           prompt,
-          schema: schema,
-          **config_opts
+          schema: normalized_schema,
+          temperature: payload[:temperature] || 0.3, # Lower temperature for more deterministic JSON
+          max_length: structured_max_length,
+          warn_on_parse_error: true,
+          reset_cache: true # Ensure KV cache is cleared
         )
+
+        RubyLLM.logger.debug "Structured generation result: #{result.inspect}"
+
+        # generate_structured returns a Hash on success, or raw String on parse failure
+        result
       rescue StandardError => e
-        RubyLLM.logger.warn "Structured generation failed: #{e.message}. Falling back to regular generation."
-        model.generate(
-          prompt,
-          config: ::Candle::GenerationConfig.balanced(**config_opts)
-        )
+        # Don't silently fall back - log details and re-raise
+        RubyLLM.logger.error "Structured generation failed: #{e.class}: #{e.message}"
+        RubyLLM.logger.error e.backtrace.first(5).join("\n") if e.backtrace
+        raise RubyLLM::Error.new(nil, "Structured generation failed: #{e.message}")
+      end
+
+      # Recursively convert all hash keys to symbols
+      def deep_symbolize_keys(obj)
+        case obj
+        when Hash
+          obj.each_with_object({}) do |(key, value), result|
+            result[key.to_sym] = deep_symbolize_keys(value)
+          end
+        when Array
+          obj.map { |item| deep_symbolize_keys(item) }
+        else
+          obj
+        end
+      end
+
+      def build_structured_messages(messages, schema)
+        # Clone messages to avoid modifying the original
+        modified_messages = messages.map(&:dup)
+
+        # Find the last user message and append JSON instructions
+        last_user_idx = modified_messages.rindex { |m| m[:role] == "user" }
+        return modified_messages unless last_user_idx
+
+        schema_description = describe_schema(schema)
+        json_instruction = "\n\nRespond with ONLY a valid JSON object containing: #{schema_description}"
+
+        modified_messages[last_user_idx][:content] += json_instruction
+        modified_messages
+      end
+
+      def describe_schema(schema)
+        return "the requested data" unless schema.is_a?(Hash)
+
+        # Support both symbol and string keys for robustness
+        properties = schema[:properties] || schema["properties"]
+        return "the requested data" unless properties
+
+        properties.map do |key, value|
+          type = value[:type] || value["type"] || "any"
+          enum = value[:enum] || value["enum"]
+          if enum
+            "#{key} (#{type}, one of: #{enum.join(', ')})"
+          else
+            "#{key} (#{type})"
+          end
+        end.join(", ")
       end
 
       def format_response(response, schema)
