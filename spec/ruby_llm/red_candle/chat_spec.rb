@@ -109,12 +109,32 @@ RSpec.describe RubyLLM::RedCandle::Chat do
         expect(result[:role]).to eq("assistant")
       end
 
-      it "falls back to regular generation on structured failure" do
+      it "raises an error on structured generation failure" do
         schema = { type: "object", properties: { name: { type: "string" } } }
 
         allow(mock_model).to receive(:generate_structured).and_raise(StandardError, "Structured gen failed")
-        allow(mock_model).to receive(:generate).and_return("Fallback response")
-        allow(RubyLLM.logger).to receive(:warn)
+        allow(RubyLLM.logger).to receive(:error)
+
+        payload = {
+          messages: messages,
+          model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+          temperature: 0.7,
+          schema: schema
+        }
+
+        expect { provider.perform_completion!(payload) }.to raise_error(
+          RubyLLM::Error,
+          /Structured generation failed/
+        )
+        expect(RubyLLM.logger).to have_received(:error).at_least(:once)
+      end
+
+      it "normalizes schema keys to symbols" do
+        # Test with string keys - should be normalized to symbols
+        schema = { "type" => "object", "properties" => { "name" => { "type" => "string" } } }
+        structured_response = { "name" => "Alice" }
+
+        allow(mock_model).to receive(:generate_structured).and_return(structured_response)
 
         payload = {
           messages: messages,
@@ -125,8 +145,7 @@ RSpec.describe RubyLLM::RedCandle::Chat do
 
         result = provider.perform_completion!(payload)
 
-        expect(result[:content]).to eq("Fallback response")
-        expect(RubyLLM.logger).to have_received(:warn).with(/Structured generation failed/)
+        expect(result[:content]).to eq(JSON.generate(structured_response))
       end
     end
   end
@@ -193,6 +212,146 @@ RSpec.describe RubyLLM::RedCandle::Chat do
 
       formatted = provider.send(:format_messages, messages)
       expect(formatted).to eq([{ role: "user", content: "Part 1 Part 2" }])
+    end
+  end
+
+  describe "#deep_symbolize_keys" do
+    it "converts string keys to symbols" do
+      input = { "type" => "object", "properties" => { "name" => { "type" => "string" } } }
+      result = provider.send(:deep_symbolize_keys, input)
+
+      expect(result).to eq({ type: "object", properties: { name: { type: "string" } } })
+    end
+
+    it "handles arrays with hashes" do
+      input = { "items" => [{ "name" => "Alice" }, { "name" => "Bob" }] }
+      result = provider.send(:deep_symbolize_keys, input)
+
+      expect(result).to eq({ items: [{ name: "Alice" }, { name: "Bob" }] })
+    end
+
+    it "preserves non-hash values" do
+      input = { "count" => 42, "active" => true, "name" => "test" }
+      result = provider.send(:deep_symbolize_keys, input)
+
+      expect(result).to eq({ count: 42, active: true, name: "test" })
+    end
+
+    it "handles already symbolized keys" do
+      input = { type: "object", properties: { name: { type: "string" } } }
+      result = provider.send(:deep_symbolize_keys, input)
+
+      expect(result).to eq(input)
+    end
+  end
+
+  describe "#describe_schema" do
+    it "returns description for schema with symbol keys" do
+      schema = {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          age: { type: "integer" }
+        }
+      }
+
+      result = provider.send(:describe_schema, schema)
+
+      expect(result).to include("name (string)")
+      expect(result).to include("age (integer)")
+    end
+
+    it "returns description for schema with string keys" do
+      schema = {
+        "type" => "object",
+        "properties" => {
+          "name" => { "type" => "string" },
+          "age" => { "type" => "integer" }
+        }
+      }
+
+      result = provider.send(:describe_schema, schema)
+
+      expect(result).to include("name (string)")
+      expect(result).to include("age (integer)")
+    end
+
+    it "handles enum values" do
+      schema = {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: %w[active inactive] }
+        }
+      }
+
+      result = provider.send(:describe_schema, schema)
+
+      expect(result).to include("status (string, one of: active, inactive)")
+    end
+
+    it "returns fallback for invalid schema" do
+      expect(provider.send(:describe_schema, nil)).to eq("the requested data")
+      expect(provider.send(:describe_schema, "not a hash")).to eq("the requested data")
+      expect(provider.send(:describe_schema, { type: "object" })).to eq("the requested data")
+    end
+  end
+
+  describe "#build_structured_messages" do
+    it "appends JSON instructions to the last user message" do
+      messages = [
+        { role: "user", content: "Hello" },
+        { role: "assistant", content: "Hi there" },
+        { role: "user", content: "Tell me about Ruby" }
+      ]
+      schema = { type: "object", properties: { answer: { type: "string" } } }
+
+      result = provider.send(:build_structured_messages, messages, schema)
+
+      expect(result.last[:content]).to include("Tell me about Ruby")
+      expect(result.last[:content]).to include("Respond with ONLY a valid JSON object")
+      expect(result.last[:content]).to include("answer (string)")
+    end
+
+    it "does not modify the original messages" do
+      messages = [{ role: "user", content: "Original content" }]
+      schema = { type: "object", properties: { test: { type: "string" } } }
+
+      provider.send(:build_structured_messages, messages, schema)
+
+      expect(messages.first[:content]).to eq("Original content")
+    end
+
+    it "returns unchanged messages when no user message exists" do
+      messages = [{ role: "system", content: "System prompt" }]
+      schema = { type: "object", properties: { test: { type: "string" } } }
+
+      result = provider.send(:build_structured_messages, messages, schema)
+
+      expect(result).to eq(messages)
+    end
+  end
+
+  describe "#format_response" do
+    it "converts hash response to JSON string when schema present" do
+      response = { name: "Alice", age: 30 }
+      result = provider.send(:format_response, response, { type: "object" })
+
+      expect(result[:content]).to eq('{"name":"Alice","age":30}')
+      expect(result[:role]).to eq("assistant")
+    end
+
+    it "returns string response as-is when schema present but response is string" do
+      response = "Plain text response"
+      result = provider.send(:format_response, response, { type: "object" })
+
+      expect(result[:content]).to eq("Plain text response")
+    end
+
+    it "returns string response as-is when no schema" do
+      response = "Plain text response"
+      result = provider.send(:format_response, response, nil)
+
+      expect(result[:content]).to eq("Plain text response")
     end
   end
 end

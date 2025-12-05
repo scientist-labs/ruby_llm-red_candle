@@ -70,12 +70,28 @@ module RedCandleTestHelper
     end
 
     def generate_structured(_prompt, schema:, **_opts)
-      # Return a simple structured response
-      if schema.is_a?(Hash)
-        { result: "structured test response" }
-      else
-        "structured test response"
+      # Return a structured response based on schema properties
+      return "structured test response" unless schema.is_a?(Hash)
+
+      properties = schema[:properties] || schema["properties"]
+      return { result: "structured test response" } unless properties
+
+      # Build a response that matches the schema
+      response = {}
+      properties.each do |key, spec|
+        type = spec[:type] || spec["type"]
+        case type
+        when "string"
+          response[key.to_s] = "test_#{key}"
+        when "integer", "number"
+          response[key.to_s] = 42
+        when "boolean"
+          response[key.to_s] = true
+        else
+          response[key.to_s] = "test_value"
+        end
       end
+      response
     end
   end
 end

@@ -57,5 +57,48 @@ RSpec.describe RubyLLM::RedCandle do
       expect(chunks.first).to be_a(RubyLLM::Chunk)
       expect(response).to be_a(RubyLLM::Message)
     end
+
+    it "supports structured output with schema" do
+      chat = RubyLLM.chat(
+        provider: :red_candle,
+        model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
+      )
+
+      schema = {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          age: { type: "integer" }
+        },
+        required: %w[name age]
+      }
+
+      response = chat.with_schema(schema).ask("Generate a person profile")
+
+      expect(response).to be_a(RubyLLM::Message)
+      # RubyLLM parses the JSON response into a Hash
+      expect(response.content).to be_a(Hash)
+    end
+
+    it "supports structured output with string keys in schema" do
+      chat = RubyLLM.chat(
+        provider: :red_candle,
+        model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
+      )
+
+      # Use string keys to test normalization
+      schema = {
+        "type" => "object",
+        "properties" => {
+          "answer" => { "type" => "string" }
+        },
+        "required" => ["answer"]
+      }
+
+      response = chat.with_schema(schema).ask("What is 2+2?")
+
+      expect(response).to be_a(RubyLLM::Message)
+      expect(response.content).to be_a(Hash)
+    end
   end
 end
