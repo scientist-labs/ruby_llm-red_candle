@@ -354,4 +354,94 @@ RSpec.describe RubyLLM::RedCandle::Chat do
       expect(result[:content]).to eq("Plain text response")
     end
   end
+
+  describe "#build_prompt" do
+    let(:mock_model) { instance_double(Candle::LLM) }
+    let(:messages) { [{ role: "user", content: "Hello" }] }
+
+    it "uses chat template when model supports it" do
+      allow(mock_model).to receive(:respond_to?).with(:apply_chat_template).and_return(true)
+      allow(mock_model).to receive(:apply_chat_template).with(messages).and_return("<|user|>Hello<|assistant|>")
+
+      result = provider.send(:build_prompt, mock_model, messages)
+
+      expect(result).to eq("<|user|>Hello<|assistant|>")
+    end
+
+    it "uses fallback formatting when model does not support chat template" do
+      allow(mock_model).to receive(:respond_to?).with(:apply_chat_template).and_return(false)
+
+      result = provider.send(:build_prompt, mock_model, messages)
+
+      expect(result).to eq("user: Hello\n\nassistant:")
+    end
+
+    it "handles multiple messages in fallback format" do
+      multi_messages = [
+        { role: "user", content: "Hi" },
+        { role: "assistant", content: "Hello!" },
+        { role: "user", content: "How are you?" }
+      ]
+      allow(mock_model).to receive(:respond_to?).with(:apply_chat_template).and_return(false)
+
+      result = provider.send(:build_prompt, mock_model, multi_messages)
+
+      expect(result).to eq("user: Hi\n\nassistant: Hello!\n\nuser: How are you?\n\nassistant:")
+    end
+  end
+
+  describe "#generation_params" do
+    it "returns default values for regular generation" do
+      payload = {}
+      temperature, max_length = provider.send(:generation_params, payload)
+
+      expect(temperature).to eq(0.7)
+      expect(max_length).to eq(512)
+    end
+
+    it "returns structured defaults when structured: true" do
+      payload = {}
+      temperature, max_length = provider.send(:generation_params, payload, structured: true)
+
+      expect(temperature).to eq(0.3)
+      expect(max_length).to eq(1024)
+    end
+
+    it "uses payload values when provided" do
+      payload = { temperature: 0.5, max_tokens: 256 }
+      temperature, max_length = provider.send(:generation_params, payload)
+
+      expect(temperature).to eq(0.5)
+      expect(max_length).to eq(256)
+    end
+
+    it "uses payload values over structured defaults" do
+      payload = { temperature: 0.9, max_tokens: 2048 }
+      temperature, max_length = provider.send(:generation_params, payload, structured: true)
+
+      expect(temperature).to eq(0.9)
+      expect(max_length).to eq(2048)
+    end
+  end
+
+  describe "#build_generation_config" do
+    it "returns a GenerationConfig with default values" do
+      payload = {}
+      config = provider.send(:build_generation_config, payload)
+
+      expect(config).to be_a(Candle::GenerationConfig)
+    end
+
+    it "passes structured flag to generation_params" do
+      payload = {}
+
+      # Test that structured generation uses different defaults
+      regular_config = provider.send(:build_generation_config, payload, structured: false)
+      structured_config = provider.send(:build_generation_config, payload, structured: true)
+
+      # Both should return valid configs
+      expect(regular_config).to be_a(Candle::GenerationConfig)
+      expect(structured_config).to be_a(Candle::GenerationConfig)
+    end
+  end
 end

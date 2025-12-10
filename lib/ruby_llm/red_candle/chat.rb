@@ -64,26 +64,10 @@ module RubyLLM
         response = if payload[:schema]
                      generate_with_schema(model, messages, payload[:schema], payload)
                    else
-                     # Apply chat template if available
-                     prompt = if model.respond_to?(:apply_chat_template)
-                                model.apply_chat_template(messages)
-                              else
-                                # Fallback to simple formatting
-                                "#{messages.map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n\n")}\n\nassistant:"
-                              end
-
-                     # Check context length
+                     prompt = build_prompt(model, messages)
                      validate_context_length!(prompt, payload[:model])
-
-                     # Configure generation for regular (non-structured) output
-                     config_opts = {
-                       temperature: payload[:temperature] || 0.7,
-                       max_length: payload[:max_tokens] || 512
-                     }
-                     model.generate(
-                       prompt,
-                       config: ::Candle::GenerationConfig.balanced(**config_opts)
-                     )
+                     config = build_generation_config(payload)
+                     model.generate(prompt, config: config)
                    end
 
         format_response(response, payload[:schema])
@@ -93,21 +77,9 @@ module RubyLLM
         model = ensure_model_loaded!(payload[:model])
         messages = format_messages(payload[:messages])
 
-        # Apply chat template if available
-        prompt = if model.respond_to?(:apply_chat_template)
-                   model.apply_chat_template(messages)
-                 else
-                   "#{messages.map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n\n")}\n\nassistant:"
-                 end
-
-        # Check context length
+        prompt = build_prompt(model, messages)
         validate_context_length!(prompt, payload[:model])
-
-        # Configure generation
-        config = ::Candle::GenerationConfig.balanced(
-          temperature: payload[:temperature] || 0.7,
-          max_length: payload[:max_tokens] || 512
-        )
+        config = build_generation_config(payload)
 
         # Collect all streamed content
         full_content = ""
@@ -137,6 +109,37 @@ module RubyLLM
       end
 
       private
+
+      # Build the prompt string from messages using the model's chat template
+      def build_prompt(model, messages)
+        if model.respond_to?(:apply_chat_template)
+          model.apply_chat_template(messages)
+        else
+          # Fallback to simple formatting
+          "#{messages.map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n\n")}\n\nassistant:"
+        end
+      end
+
+      # Get generation parameters with consistent defaults
+      # @param payload [Hash] The request payload
+      # @param structured [Boolean] Whether this is for structured generation (uses different defaults)
+      # @return [Array<Float, Integer>] temperature and max_length values
+      def generation_params(payload, structured: false)
+        temperature = payload[:temperature] || (structured ? 0.3 : 0.7)
+        max_length = payload[:max_tokens] || (structured ? 1024 : 512)
+        [temperature, max_length]
+      end
+
+      # Build generation config with consistent defaults
+      # @param payload [Hash] The request payload
+      # @param structured [Boolean] Whether this is for structured generation (uses different defaults)
+      def build_generation_config(payload, structured: false)
+        temperature, max_length = generation_params(payload, structured: structured)
+        ::Candle::GenerationConfig.balanced(
+          temperature: temperature,
+          max_length: max_length
+        )
+      end
 
       def ensure_model_loaded!(model_id)
         @loaded_models[model_id] ||= load_model(model_id)
@@ -250,12 +253,6 @@ module RubyLLM
       def generate_with_schema(model, messages, schema, payload)
         # Use Red Candle's native structured generation which uses the Rust outlines crate
         # for grammar-constrained generation. This ensures valid JSON output.
-        #
-        # Red Candle's generate_structured:
-        # 1. Creates a StructuredConstraint from the JSON schema
-        # 2. Passes it to the generation config
-        # 3. Constrains token generation to only valid JSON tokens
-        # 4. Automatically parses and returns the result as a Hash
 
         # Normalize schema to ensure consistent symbol keys
         normalized_schema = deep_symbolize_keys(schema)
@@ -271,29 +268,22 @@ module RubyLLM
         structured_messages = build_structured_messages(messages, normalized_schema)
         RubyLLM.logger.debug "Structured messages: #{structured_messages.inspect}"
 
-        # Apply chat template to get proper prompt format
-        prompt = if model.respond_to?(:apply_chat_template)
-                   model.apply_chat_template(structured_messages)
-                 else
-                   "#{structured_messages.map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n\n")}\n\nassistant:"
-                 end
-
+        prompt = build_prompt(model, structured_messages)
         RubyLLM.logger.debug "Final prompt:\n#{prompt}"
         RubyLLM.logger.debug "=== END DEBUG ==="
 
-        # Check context length
         validate_context_length!(prompt, payload[:model])
 
-        # Use higher max_length for structured output to ensure complete JSON
-        structured_max_length = payload[:max_tokens] || 1024
+        # Get generation parameters (structured generation uses different defaults)
+        temperature, max_length = generation_params(payload, structured: true)
 
         result = model.generate_structured(
           prompt,
           schema: normalized_schema,
-          temperature: payload[:temperature] || 0.3, # Lower temperature for more deterministic JSON
-          max_length: structured_max_length,
+          temperature: temperature,
+          max_length: max_length,
           warn_on_parse_error: true,
-          reset_cache: true # Ensure KV cache is cleared
+          reset_cache: true
         )
 
         RubyLLM.logger.debug "Structured generation result: #{result.inspect}"
