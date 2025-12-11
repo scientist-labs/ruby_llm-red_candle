@@ -87,6 +87,66 @@ RSpec.describe RubyLLM::RedCandle::Chat do
           role: "assistant"
         )
       end
+
+      it "wraps generation errors with helpful messages" do
+        allow(mock_model).to receive(:generate).and_raise(StandardError, "raw error from candle")
+
+        payload = {
+          messages: messages,
+          model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+          temperature: 0.7
+        }
+
+        expect { provider.perform_completion!(payload) }.to raise_error(
+          RubyLLM::Error,
+          /Generation failed for TheBloke\/TinyLlama.*raw error from candle/
+        )
+      end
+
+      it "provides helpful message for out of memory errors" do
+        allow(mock_model).to receive(:generate).and_raise(StandardError, "out of memory")
+
+        payload = {
+          messages: messages,
+          model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+          temperature: 0.7
+        }
+
+        expect { provider.perform_completion!(payload) }.to raise_error(
+          RubyLLM::Error,
+          /Out of memory.*Try using a smaller model/m
+        )
+      end
+
+      it "provides helpful message for context length errors" do
+        allow(mock_model).to receive(:generate).and_raise(StandardError, "context length exceeded")
+
+        payload = {
+          messages: messages,
+          model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+          temperature: 0.7
+        }
+
+        expect { provider.perform_completion!(payload) }.to raise_error(
+          RubyLLM::Error,
+          /Context length exceeded.*input is too long/m
+        )
+      end
+
+      it "provides helpful message for tensor/shape errors" do
+        allow(mock_model).to receive(:generate).and_raise(StandardError, "tensor shape mismatch")
+
+        payload = {
+          messages: messages,
+          model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+          temperature: 0.7
+        }
+
+        expect { provider.perform_completion!(payload) }.to raise_error(
+          RubyLLM::Error,
+          /Model execution error.*incompatible model format/m
+        )
+      end
     end
 
     context "with structured generation" do
@@ -113,7 +173,7 @@ RSpec.describe RubyLLM::RedCandle::Chat do
         schema = { type: "object", properties: { name: { type: "string" } } }
 
         allow(mock_model).to receive(:generate_structured).and_raise(StandardError, "Structured gen failed")
-        allow(RubyLLM.logger).to receive(:error)
+        allow(RubyLLM.logger).to receive(:debug)
 
         payload = {
           messages: messages,
@@ -126,7 +186,7 @@ RSpec.describe RubyLLM::RedCandle::Chat do
           RubyLLM::Error,
           /Structured generation failed/
         )
-        expect(RubyLLM.logger).to have_received(:error).at_least(:once)
+        expect(RubyLLM.logger).to have_received(:debug).at_least(:once)
       end
 
       it "normalizes schema keys to symbols" do
