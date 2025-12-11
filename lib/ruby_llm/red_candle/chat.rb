@@ -67,7 +67,7 @@ module RubyLLM
                      prompt = build_prompt(model, messages)
                      validate_context_length!(prompt, payload[:model])
                      config = build_generation_config(payload)
-                     model.generate(prompt, config: config)
+                     generate_with_error_handling(model, prompt, config, payload[:model])
                    end
 
         format_response(response, payload[:schema])
@@ -84,8 +84,8 @@ module RubyLLM
         # Collect all streamed content
         full_content = ""
 
-        # Stream tokens
-        model.generate_stream(prompt, config: config) do |token|
+        # Stream tokens with error handling
+        stream_with_error_handling(model, prompt, config, payload[:model]) do |token|
           full_content += token
           chunk = format_stream_chunk(token)
           block.call(chunk)
@@ -187,6 +187,44 @@ module RubyLLM
           See https://github.com/scientist-labs/red-candle?tab=readme-ov-file#%EF%B8%8F-huggingface-login-warning
           Original error: #{exception.message}"
         ERROR_MESSAGE
+      end
+
+      def generate_with_error_handling(model, prompt, config, model_id)
+        model.generate(prompt, config: config)
+      rescue StandardError => e
+        raise RubyLLM::Error.new(nil, generation_error_message(e, model_id))
+      end
+
+      def stream_with_error_handling(model, prompt, config, model_id, &block)
+        model.generate_stream(prompt, config: config, &block)
+      rescue StandardError => e
+        raise RubyLLM::Error.new(nil, generation_error_message(e, model_id))
+      end
+
+      def generation_error_message(exception, model_id)
+        message = exception.message.to_s
+
+        if message.include?("out of memory") || message.include?("OOM")
+          <<~ERROR_MESSAGE.strip
+            Out of memory while generating with #{model_id}.
+            Try using a smaller model or reducing the context length.
+            Original error: #{message}
+          ERROR_MESSAGE
+        elsif message.include?("context") || message.include?("sequence")
+          <<~ERROR_MESSAGE.strip
+            Context length exceeded for #{model_id}.
+            The input is too long for this model's context window.
+            Original error: #{message}
+          ERROR_MESSAGE
+        elsif message.include?("tensor") || message.include?("shape")
+          <<~ERROR_MESSAGE.strip
+            Model execution error for #{model_id}.
+            This may indicate an incompatible model format or corrupted weights.
+            Original error: #{message}
+          ERROR_MESSAGE
+        else
+          "Generation failed for #{model_id}: #{message}"
+        end
       end
 
       def format_messages(messages)
