@@ -226,7 +226,68 @@ begin
   success "String key normalization completed"
 
   # ---------------------------------------------------------------------------
-  section "10. Error Handling"
+  section "10. Schema Validation"
+  # ---------------------------------------------------------------------------
+
+  info "Testing schema validation with invalid schema..."
+  begin
+    invalid_schema = { type: "object" } # Missing 'properties'
+    chat = RubyLLM.chat(provider: :red_candle, model: MODEL)
+    chat.with_schema(invalid_schema).ask("This should fail")
+    puts "  [FAIL] Should have raised a validation error"
+  rescue RubyLLM::Error => e
+    result "Validation error caught", e.message.lines.first.strip
+    success "Schema validation works correctly"
+  end
+
+  info "Testing with non-object schema type..."
+  begin
+    array_schema = { type: "array", items: { type: "string" } }
+    chat = RubyLLM.chat(provider: :red_candle, model: MODEL)
+    chat.with_schema(array_schema).ask("This should fail")
+    puts "  [FAIL] Should have raised a validation error"
+  rescue RubyLLM::Error => e
+    result "Type error caught", e.message.lines.first.strip
+    success "Non-object schema rejection works correctly"
+  end
+
+  # ---------------------------------------------------------------------------
+  section "11. Custom JSON Instruction Template"
+  # ---------------------------------------------------------------------------
+
+  info "Current default template:"
+  result "Default", RubyLLM::RedCandle::Configuration.json_instruction_template[0..60] + "..."
+
+  info "Setting custom template..."
+  RubyLLM::RedCandle::Configuration.json_instruction_template = <<~TEMPLATE
+
+    OUTPUT FORMAT: You must respond with valid JSON containing: {schema_description}
+    No other text allowed, only the JSON object.
+  TEMPLATE
+
+  result "Custom template set", RubyLLM::RedCandle::Configuration.json_instruction_template.lines.first.strip
+
+  info "Testing structured output with custom template..."
+  chat = RubyLLM.chat(provider: :red_candle, model: MODEL)
+  custom_schema = {
+    type: "object",
+    properties: {
+      greeting: { type: "string" }
+    },
+    required: ["greeting"]
+  }
+  response = chat.with_schema(custom_schema).ask("Say hello")
+
+  result "Response", response.content.inspect
+  success "Custom template structured output completed"
+
+  info "Resetting to default template..."
+  RubyLLM::RedCandle::Configuration.reset!
+  result "Template reset", RubyLLM::RedCandle::Configuration.json_instruction_template[0..60] + "..."
+  success "Configuration reset works correctly"
+
+  # ---------------------------------------------------------------------------
+  section "12. Error Handling"
   # ---------------------------------------------------------------------------
 
   info "Testing error handling with invalid model..."
