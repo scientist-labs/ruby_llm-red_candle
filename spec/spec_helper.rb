@@ -1,5 +1,13 @@
 # frozen_string_literal: true
 
+require "simplecov"
+SimpleCov.start do
+  add_filter "/spec/"
+  add_group "Provider", "lib/ruby_llm/red_candle"
+  enable_coverage :branch
+  minimum_coverage line: 80, branch: 70
+end
+
 require "bundler/setup"
 require "ruby_llm-red_candle"
 

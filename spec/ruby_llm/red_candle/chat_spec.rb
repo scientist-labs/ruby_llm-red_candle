@@ -282,6 +282,59 @@ RSpec.describe RubyLLM::RedCandle::Chat do
       expect(final_chunk).to be_a(RubyLLM::Chunk)
       expect(final_chunk.content).to eq("")
     end
+
+    it "returns a Message with accumulated content and token estimates" do
+      tokens = %w[Hello world !]
+
+      allow(mock_model).to receive(:generate_stream) do |_prompt, config:, &block|
+        tokens.each { |token| block.call(token) }
+      end
+
+      payload = {
+        messages: messages,
+        model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+        temperature: 0.7
+      }
+
+      result = provider.perform_streaming_completion!(payload) { |_chunk| }
+
+      expect(result).to be_a(RubyLLM::Message)
+      expect(result.role).to eq(:assistant)
+      expect(result.content).to eq("Helloworld!")
+      expect(result.model_id).to eq("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF")
+      expect(result.input_tokens).to be_a(Integer)
+      expect(result.output_tokens).to be_a(Integer)
+    end
+
+    it "wraps streaming errors with helpful messages" do
+      allow(mock_model).to receive(:generate_stream).and_raise(StandardError, "stream error")
+
+      payload = {
+        messages: messages,
+        model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+        temperature: 0.7
+      }
+
+      expect { provider.perform_streaming_completion!(payload) { |_| } }.to raise_error(
+        RubyLLM::Error,
+        /Generation failed for TheBloke\/TinyLlama.*stream error/
+      )
+    end
+
+    it "provides helpful message for OOM errors during streaming" do
+      allow(mock_model).to receive(:generate_stream).and_raise(StandardError, "out of memory")
+
+      payload = {
+        messages: messages,
+        model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+        temperature: 0.7
+      }
+
+      expect { provider.perform_streaming_completion!(payload) { |_| } }.to raise_error(
+        RubyLLM::Error,
+        /Out of memory.*Try using a smaller model/m
+      )
+    end
   end
 
   describe "message formatting" do
