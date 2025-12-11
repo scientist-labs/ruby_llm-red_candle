@@ -129,9 +129,10 @@ RSpec.describe RubyLLM::RedCandle::SchemaValidator do
         }
         errors = described_class.validate(schema)
 
+        # Only the invalid property should produce an error
         expect(errors.size).to eq(1)
         expect(errors.first).to include("invalid_prop")
-        expect(errors.first).not_to include("valid_prop")
+        expect(errors.first).to include("must have a 'type' field")
       end
     end
   end

@@ -100,5 +100,19 @@ RSpec.describe RubyLLM::RedCandle do
       expect(response).to be_a(RubyLLM::Message)
       expect(response.content).to be_a(Hash)
     end
+
+    it "rejects invalid schemas with helpful error messages" do
+      chat = RubyLLM.chat(
+        provider: :red_candle,
+        model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
+      )
+
+      invalid_schema = { type: "object" } # Missing properties
+
+      expect { chat.with_schema(invalid_schema).ask("test") }.to raise_error(RubyLLM::Error) do |error|
+        expect(error.message).to include("Invalid schema")
+        expect(error.message).to include("properties")
+      end
+    end
   end
 end
