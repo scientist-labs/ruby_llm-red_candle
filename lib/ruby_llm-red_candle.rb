@@ -3,6 +3,8 @@
 require "ruby_llm"
 
 require_relative "ruby_llm/red_candle/version"
+require_relative "ruby_llm/red_candle/configuration"
+require_relative "ruby_llm/red_candle/schema_validator"
 require_relative "ruby_llm/red_candle/capabilities"
 require_relative "ruby_llm/red_candle/models"
 require_relative "ruby_llm/red_candle/streaming"

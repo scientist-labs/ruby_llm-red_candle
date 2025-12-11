@@ -257,6 +257,9 @@ module RubyLLM
         # Normalize schema to ensure consistent symbol keys
         normalized_schema = deep_symbolize_keys(schema)
 
+        # Validate schema before attempting generation
+        SchemaValidator.validate!(normalized_schema)
+
         # Debug logging to help diagnose issues
         RubyLLM.logger.debug "=== STRUCTURED GENERATION DEBUG ==="
         RubyLLM.logger.debug "Original schema: #{schema.inspect}"
@@ -320,7 +323,7 @@ module RubyLLM
         return modified_messages unless last_user_idx
 
         schema_description = describe_schema(schema)
-        json_instruction = "\n\nRespond with ONLY a valid JSON object containing: #{schema_description}"
+        json_instruction = Configuration.build_json_instruction(schema_description)
 
         modified_messages[last_user_idx][:content] += json_instruction
         modified_messages

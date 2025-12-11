@@ -262,6 +262,28 @@ huggingface-cli login
 
 See the [Red Candle HuggingFace guide](https://github.com/scientist-labs/red-candle/blob/main/docs/HUGGINGFACE.md) for details.
 
+### Custom JSON Instruction Template
+
+By default, structured generation appends instructions to guide the model to output JSON. You can customize this template for different models or use cases:
+
+```ruby
+# View the default template
+RubyLLM::RedCandle::Configuration.json_instruction_template
+# => "\n\nRespond with ONLY a valid JSON object containing: {schema_description}"
+
+# Set a custom template (use {schema_description} as placeholder)
+RubyLLM::RedCandle::Configuration.json_instruction_template = <<~TEMPLATE
+
+  You must respond with valid JSON matching this structure: {schema_description}
+  Do not include any other text, only the JSON object.
+TEMPLATE
+
+# Reset to default
+RubyLLM::RedCandle::Configuration.reset!
+```
+
+Different models may respond better to different phrasings. Experiment with templates if you're getting inconsistent structured output.
+
 ### Debug Logging
 
 Enable debug logging to troubleshoot issues:
@@ -291,7 +313,26 @@ Common errors:
 - **Model not found** - Check model ID spelling
 - **Failed to load tokenizer** - Model may require HuggingFace login
 - **Context length exceeded** - Reduce conversation length or use model with larger context window
+- **Invalid schema** - Schema must be `type: 'object'` with `properties` defined
 - **Structured generation failed** - Schema may be too complex; try simplifying
+
+### Schema Validation
+
+Schemas are validated before generation. Invalid schemas produce helpful error messages:
+
+```ruby
+# This will fail with a descriptive error
+invalid_schema = { type: "array" }  # Must be 'object' with properties
+chat.with_schema(invalid_schema).ask("...")
+# => RubyLLM::Error: Invalid schema for structured generation:
+#      - Schema type must be 'object' for structured generation, got 'array'
+#      - Schema must have a 'properties' field...
+```
+
+Valid schemas must have:
+- `type: 'object'`
+- `properties` hash with at least one property
+- Each property must have a `type` field
 
 ## Limitations
 

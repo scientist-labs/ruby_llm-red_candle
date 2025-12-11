@@ -147,6 +147,38 @@ RSpec.describe RubyLLM::RedCandle::Chat do
 
         expect(result[:content]).to eq(JSON.generate(structured_response))
       end
+
+      it "validates schema before generation" do
+        invalid_schema = { type: "object" } # Missing properties
+
+        payload = {
+          messages: messages,
+          model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+          temperature: 0.7,
+          schema: invalid_schema
+        }
+
+        expect { provider.perform_completion!(payload) }.to raise_error(
+          RubyLLM::Error,
+          /Invalid schema.*must have a 'properties' field/m
+        )
+      end
+
+      it "rejects non-object type schemas" do
+        invalid_schema = { type: "array", items: { type: "string" } }
+
+        payload = {
+          messages: messages,
+          model: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+          temperature: 0.7,
+          schema: invalid_schema
+        }
+
+        expect { provider.perform_completion!(payload) }.to raise_error(
+          RubyLLM::Error,
+          /type must be 'object'/
+        )
+      end
     end
   end
 
@@ -297,6 +329,10 @@ RSpec.describe RubyLLM::RedCandle::Chat do
   end
 
   describe "#build_structured_messages" do
+    after do
+      RubyLLM::RedCandle::Configuration.reset!
+    end
+
     it "appends JSON instructions to the last user message" do
       messages = [
         { role: "user", content: "Hello" },
@@ -328,6 +364,18 @@ RSpec.describe RubyLLM::RedCandle::Chat do
       result = provider.send(:build_structured_messages, messages, schema)
 
       expect(result).to eq(messages)
+    end
+
+    it "uses custom instruction template when configured" do
+      RubyLLM::RedCandle::Configuration.json_instruction_template = "\n\nOutput JSON: {schema_description}"
+
+      messages = [{ role: "user", content: "Generate data" }]
+      schema = { type: "object", properties: { name: { type: "string" } } }
+
+      result = provider.send(:build_structured_messages, messages, schema)
+
+      expect(result.last[:content]).to include("Output JSON: name (string)")
+      expect(result.last[:content]).not_to include("Respond with ONLY")
     end
   end
 
