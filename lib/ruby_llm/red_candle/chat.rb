@@ -294,9 +294,9 @@ module RubyLLM
         # generate_structured returns a Hash on success, or raw String on parse failure
         result
       rescue StandardError => e
-        # Don't silently fall back - log details and re-raise
-        RubyLLM.logger.error "Structured generation failed: #{e.class}: #{e.message}"
-        RubyLLM.logger.error e.backtrace.first(5).join("\n") if e.backtrace
+        # Log at debug level - the raised exception will inform the caller
+        RubyLLM.logger.debug "Structured generation failed: #{e.class}: #{e.message}"
+        RubyLLM.logger.debug e.backtrace.first(5).join("\n") if e.backtrace
         raise RubyLLM::Error.new(nil, "Structured generation failed: #{e.message}")
       end
 
