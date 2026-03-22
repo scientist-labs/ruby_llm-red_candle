@@ -70,8 +70,8 @@ RSpec.describe RubyLLM::RedCandle::Provider do
   end
 
   describe ".supports_functions?" do
-    it "returns false" do
-      expect(described_class.supports_functions?).to be false
+    it "returns true" do
+      expect(described_class.supports_functions?).to be true
     end
   end
 end

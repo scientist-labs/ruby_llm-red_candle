@@ -36,8 +36,8 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   # Runtime dependencies
-  spec.add_dependency "ruby_llm", ">= 1.2", "< 3.0"
-  spec.add_dependency "red-candle", "~> 1.3"
+  spec.add_dependency "ruby_llm", ">= 1.10", "< 3.0"
+  spec.add_dependency "red-candle", "~> 1.5"
 
   # Development dependencies
   spec.add_development_dependency "rake", "~> 13.0"

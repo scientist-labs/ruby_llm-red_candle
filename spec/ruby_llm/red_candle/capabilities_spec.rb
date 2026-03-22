@@ -8,8 +8,8 @@ RSpec.describe RubyLLM::RedCandle::Capabilities do
       expect(described_class.supports_vision?).to be false
     end
 
-    it "does not support functions" do
-      expect(described_class.supports_functions?).to be false
+    it "supports functions" do
+      expect(described_class.supports_functions?).to be true
     end
 
     it "supports streaming" do

@@ -11,7 +11,7 @@ module RubyLLM
       end
 
       def supports_functions?(_model_id = nil)
-        false
+        true
       end
 
       def supports_streaming?

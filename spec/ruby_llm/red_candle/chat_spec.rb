@@ -29,19 +29,19 @@ RSpec.describe RubyLLM::RedCandle::Chat do
       )
     end
 
-    it "raises error when tools are provided" do
-      tools = [{ name: "calculator", description: "Does math" }]
+    it "includes tools in payload when provided" do
+      tools = { "calculator" => double("tool", name: "calculator", description: "Does math") }
 
-      expect do
-        provider.render_payload(
-          messages,
-          tools: tools,
-          temperature: 0.7,
-          model: model,
-          stream: false,
-          schema: nil
-        )
-      end.to raise_error(RubyLLM::Error, /does not support tool calling/)
+      result = provider.render_payload(
+        messages,
+        tools: tools,
+        temperature: 0.7,
+        model: model,
+        stream: false,
+        schema: nil
+      )
+
+      expect(result[:tools]).to eq(tools)
     end
 
     it "includes schema when provided" do
