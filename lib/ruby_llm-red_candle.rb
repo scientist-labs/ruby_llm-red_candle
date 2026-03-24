@@ -8,6 +8,7 @@ require_relative "ruby_llm/red_candle/schema_validator"
 require_relative "ruby_llm/red_candle/capabilities"
 require_relative "ruby_llm/red_candle/models"
 require_relative "ruby_llm/red_candle/streaming"
+require_relative "ruby_llm/red_candle/tools"
 require_relative "ruby_llm/red_candle/chat"
 require_relative "ruby_llm/red_candle/provider"
 

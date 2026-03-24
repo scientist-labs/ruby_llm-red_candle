@@ -25,11 +25,13 @@ module RubyLLM
           perform_streaming_completion!(payload, &block)
         else
           result = perform_completion!(payload)
-          # Convert to Message object for compatibility
-          # Red Candle doesn't provide token counts by default, but we can estimate them
+
+          # perform_tool_completion! returns a Message directly
+          return result if result.is_a?(RubyLLM::Message)
+
+          # Convert hash result to Message object
           content = result[:content]
-          # Rough estimation: ~4 characters per token
-          estimated_output_tokens = (content.length / 4.0).round
+          estimated_output_tokens = (content.to_s.length / 4.0).round
           estimated_input_tokens = estimate_input_tokens(payload[:messages])
 
           RubyLLM::Message.new(
@@ -43,23 +45,29 @@ module RubyLLM
       end
 
       def render_payload(messages, tools:, temperature:, model:, stream:, schema:, tool_prefs: nil, thinking: nil)
-        # Red Candle doesn't support tools
-        if tools && !tools.empty?
-          raise RubyLLM::Error.new(nil, "Red Candle provider does not support tool calling")
-        end
-
-        {
+        payload = {
           messages: messages,
           temperature: temperature,
           model: model.id,
           stream: stream,
           schema: schema
         }
+
+        if tools && !tools.empty?
+          payload[:tools] = tools
+        end
+
+        payload
       end
 
       def perform_completion!(payload)
         model = ensure_model_loaded!(payload[:model])
         messages = format_messages(payload[:messages])
+
+        # Handle tool calling
+        if payload[:tools] && !payload[:tools].empty?
+          return perform_tool_completion!(model, messages, payload)
+        end
 
         # Handle structured generation differently - we need to build the prompt
         # with JSON instructions BEFORE applying the chat template
@@ -111,6 +119,34 @@ module RubyLLM
       end
 
       private
+
+      def perform_tool_completion!(model, messages, payload)
+        # Convert RubyLLM tools to Candle tools
+        candle_tools = payload[:tools].values.map { |t| Tools.candle_tool_for(t) }
+
+        # Build generation config with enough room for thinking + tool calls
+        # Tool calling needs more tokens than regular chat (model uses <think> blocks)
+        payload[:max_tokens] ||= 1000
+        config = build_generation_config(payload)
+
+        # Use red-candle's chat_with_tools (execute: false — RubyLLM manages execution)
+        result = model.chat_with_tools(messages, tools: candle_tools, config: config)
+
+        content = result.text_response || ""
+        tool_calls = Tools.parse_tool_calls(result.tool_calls)
+
+        estimated_output_tokens = ((result.raw_response || "").length / 4.0).round
+        estimated_input_tokens = estimate_input_tokens(payload[:messages])
+
+        RubyLLM::Message.new(
+          role: :assistant,
+          content: content.empty? ? nil : content,
+          tool_calls: tool_calls,
+          model_id: payload[:model],
+          input_tokens: estimated_input_tokens,
+          output_tokens: estimated_output_tokens
+        )
+      end
 
       # Build the prompt string from messages using the model's chat template
       def build_prompt(model, messages)
@@ -231,12 +267,17 @@ module RubyLLM
 
       def format_messages(messages)
         messages.map do |msg|
-          # Handle both hash and Message objects
           if msg.is_a?(RubyLLM::Message)
-            {
-              role: msg.role.to_s,
-              content: extract_message_content_from_object(msg)
-            }
+            if msg.tool_call?
+              Tools.format_tool_call(msg)
+            elsif msg.tool_result?
+              Tools.format_tool_result(msg)
+            else
+              {
+                role: msg.role.to_s,
+                content: extract_message_content_from_object(msg)
+              }
+            end
           else
             {
               role: msg[:role].to_s,
