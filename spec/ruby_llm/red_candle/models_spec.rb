@@ -10,7 +10,7 @@ RSpec.describe RubyLLM::RedCandle::Models do
     it "returns an array of supported models" do
       models = provider.models
       expect(models).to be_an(Array)
-      expect(models.size).to eq(5)
+      expect(models.size).to eq(20)
       expect(models.first).to be_a(RubyLLM::Model::Info)
     end
 
