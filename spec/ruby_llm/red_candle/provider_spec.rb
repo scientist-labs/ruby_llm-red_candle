@@ -20,6 +20,38 @@ RSpec.describe RubyLLM::RedCandle::Provider do
         provider = described_class.new(config)
         expect(provider.instance_variable_get(:@device)).to eq(Candle::Device.best)
       end
+
+      it "selects metal device when configured" do
+        allow(config).to receive(:respond_to?).with(:red_candle_device).and_return(true)
+        allow(config).to receive(:red_candle_device).and_return("metal")
+        provider = described_class.new(config)
+        expect(provider.instance_variable_get(:@device)).to eq(Candle::Device.metal)
+      end
+
+      it "falls back to best device for unknown device strings" do
+        allow(config).to receive(:respond_to?).with(:red_candle_device).and_return(true)
+        allow(config).to receive(:red_candle_device).and_return("unknown_device")
+        provider = described_class.new(config)
+        expect(provider.instance_variable_get(:@device)).to eq(Candle::Device.best)
+      end
+
+      it "falls back to CPU when device initialization fails" do
+        allow(config).to receive(:respond_to?).with(:red_candle_device).and_return(true)
+        allow(config).to receive(:red_candle_device).and_return("cuda")
+        allow(Candle::Device).to receive(:cuda).and_raise(StandardError, "CUDA not available")
+        allow(RubyLLM.logger).to receive(:warn)
+
+        provider = described_class.new(config)
+        expect(provider.instance_variable_get(:@device)).to eq(Candle::Device.cpu)
+        expect(RubyLLM.logger).to have_received(:warn).with(/Failed to initialize device/)
+      end
+
+      it "handles nil red_candle_device by using best" do
+        allow(config).to receive(:respond_to?).with(:red_candle_device).and_return(true)
+        allow(config).to receive(:red_candle_device).and_return(nil)
+        provider = described_class.new(config)
+        expect(provider.instance_variable_get(:@device)).to eq(Candle::Device.best)
+      end
     end
   end
 

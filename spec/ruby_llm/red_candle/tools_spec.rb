@@ -3,6 +3,68 @@
 require "spec_helper"
 
 RSpec.describe RubyLLM::RedCandle::Tools do
+  describe ".candle_tool_for" do
+    let(:fake_candle_tool) { double("CandleTool", name: "test") }
+
+    before do
+      # Candle::Tool may not exist in test env (native extension)
+      stub_const("Candle::Tool", Class.new) unless defined?(Candle::Tool)
+      allow(Candle::Tool).to receive(:new).and_return(fake_candle_tool)
+    end
+
+    it "uses params_schema when available" do
+      schema = { type: "object", properties: { city: { type: "string" } }, required: ["city"] }
+      tool = double("Tool", name: "get_weather", description: "Gets weather", params_schema: schema, parameters: [])
+
+      described_class.candle_tool_for(tool)
+
+      expect(::Candle::Tool).to have_received(:new).with(
+        name: "get_weather",
+        description: "Gets weather",
+        parameters: schema
+      )
+    end
+
+    it "falls back to SchemaDefinition when params_schema is nil" do
+      fallback_schema = { type: "object", properties: {}, required: [] }
+      tool = double("Tool", name: "search", description: "Searches", params_schema: nil, parameters: [])
+      schema_def = double("SchemaDefinition", json_schema: fallback_schema)
+      allow(RubyLLM::Tool::SchemaDefinition).to receive(:from_parameters).and_return(schema_def)
+
+      described_class.candle_tool_for(tool)
+
+      expect(::Candle::Tool).to have_received(:new).with(
+        name: "search",
+        description: "Searches",
+        parameters: fallback_schema
+      )
+    end
+
+    it "uses empty schema when both params_schema and SchemaDefinition return nil" do
+      tool = double("Tool", name: "noop", description: "No-op", params_schema: nil, parameters: [])
+      allow(RubyLLM::Tool::SchemaDefinition).to receive(:from_parameters).and_return(nil)
+
+      described_class.candle_tool_for(tool)
+
+      expect(::Candle::Tool).to have_received(:new).with(
+        name: "noop",
+        description: "No-op",
+        parameters: { type: "object", properties: {}, required: [] }
+      )
+    end
+
+    it "handles nil description by defaulting to empty string" do
+      tool = double("Tool", name: "test", description: nil,
+                     params_schema: { type: "object", properties: {}, required: [] }, parameters: [])
+
+      described_class.candle_tool_for(tool)
+
+      expect(::Candle::Tool).to have_received(:new).with(
+        hash_including(description: "")
+      )
+    end
+  end
+
   describe ".parse_tool_calls" do
     it "returns nil for nil input" do
       expect(described_class.parse_tool_calls(nil)).to be_nil

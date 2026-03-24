@@ -337,6 +337,71 @@ RSpec.describe RubyLLM::RedCandle::Chat do
     end
   end
 
+  describe "#perform_tool_completion!" do
+    let(:mock_model) { double("CandleLLM") }
+    let(:messages) { [{ role: "user", content: "What's the weather?" }] }
+
+    before do
+      allow(provider).to receive(:ensure_model_loaded!).and_return(mock_model)
+    end
+
+    it "converts tools and returns a Message with tool_calls" do
+      tool = double("Tool", name: "get_weather", description: "Gets weather",
+                     params_schema: { type: "object", properties: {}, required: [] },
+                     parameters: [])
+      candle_tool = double("CandleTool")
+      allow(RubyLLM::RedCandle::Tools).to receive(:candle_tool_for).and_return(candle_tool)
+
+      tc = double("ToolCall", name: "get_weather", arguments: { "city" => "NYC" })
+      result = double("Result", text_response: "", tool_calls: [tc], raw_response: "raw output")
+      allow(mock_model).to receive(:chat_with_tools).and_return(result)
+
+      payload = {
+        messages: messages,
+        model: "test-model",
+        tools: { "get_weather" => tool },
+        temperature: 0.7
+      }
+
+      msg = provider.send(:perform_tool_completion!, mock_model, messages, payload)
+
+      expect(msg).to be_a(RubyLLM::Message)
+      expect(msg.role).to eq(:assistant)
+      expect(msg.tool_calls).to be_a(Hash)
+      expect(msg.tool_calls.values.first.name).to eq("get_weather")
+    end
+
+    it "returns content as nil when text_response is empty" do
+      tool = double("Tool", name: "t", description: "d",
+                     params_schema: { type: "object", properties: {}, required: [] },
+                     parameters: [])
+      allow(RubyLLM::RedCandle::Tools).to receive(:candle_tool_for).and_return(double("CandleTool"))
+
+      result = double("Result", text_response: "", tool_calls: [], raw_response: "")
+      allow(mock_model).to receive(:chat_with_tools).and_return(result)
+
+      payload = { messages: messages, model: "test-model", tools: { "t" => tool }, temperature: 0.7 }
+      msg = provider.send(:perform_tool_completion!, mock_model, messages, payload)
+
+      expect(msg.content).to be_nil
+    end
+
+    it "returns content when text_response is present" do
+      tool = double("Tool", name: "t", description: "d",
+                     params_schema: { type: "object", properties: {}, required: [] },
+                     parameters: [])
+      allow(RubyLLM::RedCandle::Tools).to receive(:candle_tool_for).and_return(double("CandleTool"))
+
+      result = double("Result", text_response: "Here's the answer", tool_calls: [], raw_response: "raw")
+      allow(mock_model).to receive(:chat_with_tools).and_return(result)
+
+      payload = { messages: messages, model: "test-model", tools: { "t" => tool }, temperature: 0.7 }
+      msg = provider.send(:perform_tool_completion!, mock_model, messages, payload)
+
+      expect(msg.content).to eq("Here's the answer")
+    end
+  end
+
   describe "message formatting" do
     it "handles string content" do
       messages = [{ role: "user", content: "Simple text" }]
@@ -357,6 +422,98 @@ RSpec.describe RubyLLM::RedCandle::Chat do
 
       formatted = provider.send(:format_messages, messages)
       expect(formatted).to eq([{ role: "user", content: "Part 1 Part 2" }])
+    end
+
+    it "handles RubyLLM::Message objects with string content" do
+      msg = RubyLLM::Message.new(role: :user, content: "Hello from Message")
+      formatted = provider.send(:format_messages, [msg])
+
+      expect(formatted).to eq([{ role: "user", content: "Hello from Message" }])
+    end
+
+    it "handles RubyLLM::Message objects with Content objects" do
+      content = double("Content", text: "Main text", attachments: nil)
+      allow(content).to receive(:is_a?).with(anything).and_return(false)
+      allow(content).to receive(:is_a?).with(RubyLLM::Content).and_return(true)
+
+      msg = double("Message", role: :user, content: content)
+      allow(msg).to receive(:is_a?).with(RubyLLM::Message).and_return(true)
+      allow(msg).to receive(:tool_call?).and_return(false)
+      allow(msg).to receive(:tool_result?).and_return(false)
+
+      formatted = provider.send(:format_messages, [msg])
+
+      expect(formatted.first[:content]).to eq("Main text")
+    end
+
+    it "handles Content objects with attachments" do
+      attachment = double("Attachment", data: "Attached text")
+      allow(attachment).to receive(:respond_to?).with(:data).and_return(true)
+
+      content = double("Content", text: "Main", attachments: [attachment])
+      allow(content).to receive(:is_a?).with(anything).and_return(false)
+      allow(content).to receive(:is_a?).with(RubyLLM::Content).and_return(true)
+
+      msg = double("Message", role: :user, content: content)
+      allow(msg).to receive(:is_a?).with(RubyLLM::Message).and_return(true)
+      allow(msg).to receive(:tool_call?).and_return(false)
+      allow(msg).to receive(:tool_result?).and_return(false)
+
+      formatted = provider.send(:format_messages, [msg])
+
+      expect(formatted.first[:content]).to eq("Main Attached text")
+    end
+
+    it "handles non-string non-Content content via to_s" do
+      msg = double("Message", role: :user, content: 42)
+      allow(msg).to receive(:is_a?).with(RubyLLM::Message).and_return(true)
+      allow(msg).to receive(:tool_call?).and_return(false)
+      allow(msg).to receive(:tool_result?).and_return(false)
+
+      formatted = provider.send(:format_messages, [msg])
+
+      expect(formatted.first[:content]).to eq("42")
+    end
+
+    it "handles hash content with non-string non-array non-Content value" do
+      messages = [{ role: "user", content: 123 }]
+      formatted = provider.send(:format_messages, messages)
+
+      expect(formatted.first[:content]).to eq("123")
+    end
+
+    it "handles hash content with Content object" do
+      content = RubyLLM::Content.new("From hash")
+
+      messages = [{ role: "user", content: content }]
+      formatted = provider.send(:format_messages, messages)
+
+      expect(formatted.first[:content]).to eq("From hash")
+    end
+
+    it "formats tool_call messages" do
+      tool_call = RubyLLM::ToolCall.new(id: "c1", name: "search", arguments: { "q" => "ruby" })
+      msg = double("Message", role: :assistant, content: "Thinking...", tool_calls: { "c1" => tool_call })
+      allow(msg).to receive(:is_a?).with(RubyLLM::Message).and_return(true)
+      allow(msg).to receive(:tool_call?).and_return(true)
+
+      formatted = provider.send(:format_messages, [msg])
+
+      expect(formatted.first[:role]).to eq("assistant")
+      expect(formatted.first[:content]).to include("<tool_call>")
+      expect(formatted.first[:content]).to include("search")
+    end
+
+    it "formats tool_result messages" do
+      msg = double("Message", role: :tool, content: '{"result": "found"}')
+      allow(msg).to receive(:is_a?).with(RubyLLM::Message).and_return(true)
+      allow(msg).to receive(:tool_call?).and_return(false)
+      allow(msg).to receive(:tool_result?).and_return(true)
+
+      formatted = provider.send(:format_messages, [msg])
+
+      expect(formatted.first[:role]).to eq("tool")
+      expect(formatted.first[:content]).to eq('{"result": "found"}')
     end
   end
 
