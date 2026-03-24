@@ -5,8 +5,10 @@ module RubyLLM
     # Chat implementation for Red Candle provider
     module Chat
       # Override the base complete method to handle local execution
-      def complete(messages, tools:, temperature:, model:, params: {}, headers: {}, schema: nil, &block)
+      def complete(messages, tools:, temperature:, model:, params: {}, headers: {}, schema: nil, tool_prefs: nil, thinking: nil, &block)
         _ = headers # Interface compatibility
+        _ = tool_prefs # Interface compatibility (not yet used by local models)
+        _ = thinking # Interface compatibility (not yet used by local models)
         payload = RubyLLM::Utils.deep_merge(
           render_payload(
             messages,
@@ -40,7 +42,7 @@ module RubyLLM
         end
       end
 
-      def render_payload(messages, tools:, temperature:, model:, stream:, schema:)
+      def render_payload(messages, tools:, temperature:, model:, stream:, schema:, tool_prefs: nil, thinking: nil)
         # Red Candle doesn't support tools
         if tools && !tools.empty?
           raise RubyLLM::Error.new(nil, "Red Candle provider does not support tool calling")
@@ -292,8 +294,11 @@ module RubyLLM
         # Use Red Candle's native structured generation which uses the Rust outlines crate
         # for grammar-constrained generation. This ensures valid JSON output.
 
+        # Unwrap RubyLLM's schema wrapper format: {name: "response", schema: {...}, strict: true}
+        actual_schema = schema.is_a?(Hash) && (schema[:schema] || schema["schema"]) ? (schema[:schema] || schema["schema"]) : schema
+
         # Normalize schema to ensure consistent symbol keys
-        normalized_schema = deep_symbolize_keys(schema)
+        normalized_schema = deep_symbolize_keys(actual_schema)
 
         # Validate schema before attempting generation
         SchemaValidator.validate!(normalized_schema)
