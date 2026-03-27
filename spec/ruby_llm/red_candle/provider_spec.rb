@@ -22,10 +22,11 @@ RSpec.describe RubyLLM::RedCandle::Provider do
       end
 
       it "selects metal device when configured" do
+        allow(Candle::Device).to receive(:metal).and_return(Candle::Device.cpu)
         allow(config).to receive(:respond_to?).with(:red_candle_device).and_return(true)
         allow(config).to receive(:red_candle_device).and_return("metal")
-        provider = described_class.new(config)
-        expect(provider.instance_variable_get(:@device)).to eq(Candle::Device.metal)
+        described_class.new(config)
+        expect(Candle::Device).to have_received(:metal)
       end
 
       it "falls back to best device for unknown device strings" do
